@@ -254,6 +254,22 @@ namespace ams::sdmmc::impl::ClockResetController::reg {
                     *out_actual_frequency_khz = 204'000;
                     n                         = 2;
                     break;
+                #ifdef(SDMMC_UHS_DDR200_SUPPORT);//DDR200 implementation case
+                case 400'000:
+                    #if defined(AMS_SDMMC_SET_PLLC4_BASE)
+                    *out_actual_frequency_khz = 399'360;
+                    n                         = 3; //2.5 div
+                    if (module == Module_Sdmmc2 || module == Module_Sdmmc4) {
+                        clk_m = ams::reg::Encode(CLK_RST_REG_BITS_ENUM(CLK_SOURCE_SDMMC24_SDMMC24_CLK_SRC, PLLC4_OUT2_LJ));
+                    } else {
+                        clk_m = ams::reg::Encode(CLK_RST_REG_BITS_ENUM(CLK_SOURCE_SDMMCX_SDMMCX_CLK_SRC,   PLLC4_OUT2));
+                    }
+                    #else
+                    *out_actual_frequency_khz = 326'400;
+                    n                         = 1;
+                    #endif
+                    break;
+                #endif
                 AMS_UNREACHABLE_DEFAULT_CASE();
             }
 

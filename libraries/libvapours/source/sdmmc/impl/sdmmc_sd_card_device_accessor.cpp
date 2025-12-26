@@ -148,6 +148,11 @@ namespace ams::sdmmc::impl {
                 case SwitchFunctionAccessMode_Ddr50:
                     *out_sm = SpeedMode_SdCardDdr50;
                     break;
+                #ifdef SDMMC_UHS_DDR200_SUPPORT//DDR200 implementation case
+                case SwitchFunctionAccessMode_Ddr200:
+                    *out_sm = SpeedMode_Ddr200;
+                    break;
+                #endif
                 default:
                     R_THROW(sdmmc::ResultUnexpectedSdCardSwitchFunctionStatus());
             }
@@ -505,7 +510,17 @@ namespace ams::sdmmc::impl {
         } else if ((max_sm == SpeedMode_SdCardSdr104 || max_sm == SpeedMode_SdCardSdr50) && IsSupportedAccessMode(static_cast<const u8 *>(wb), SwitchFunctionAccessMode_Sdr50)) {
             target_am = SwitchFunctionAccessMode_Sdr50;
             target_sm = SpeedMode_SdCardSdr50;
-        } else {
+        }
+        #ifdef SDMMC_UHS_DDR200_SUPPORT//DDR200 implementation case
+            else if ((max_sm == SpeedMode_SdCardDdr200 && IsSupportedAccessMode(static_cast<const u8 *>(wb), SwitchFunctionAccessMode_Ddr200))) {
+                target_am = SwitchFunctionAccessMode_Ddr200;
+                target_sm = SpeedMode_SdCardDdr200;
+                // switch accessmode to ddr200 only if max speedmode is ddr200
+                /* Log that DDR200 is supported and will be selected. */
+                BaseDeviceAccessor::PushErrorLog(true, "DDR200 supported: switching to DDR200");
+            }
+        #endif
+         else {
             R_THROW(sdmmc::ResultSdCardNotSupportSdr104AndSdr50());
         }
 
@@ -649,6 +664,9 @@ namespace ams::sdmmc::impl {
             SpeedMode speed_mode;
         } StartupParameters[] = {
             #if defined(AMS_SDMMC_ENABLE_SD_UHS_I)
+                #ifdef SDMMC_UHS_DDR200_SUPPORT
+                { BusWidth_4Bit, SpeedMode_Ddr200            },//try first to start up with ddr200 if enabled
+                #endif
                 { BusWidth_4Bit, SpeedMode_SdCardSdr104       },
                 { BusWidth_4Bit, SpeedMode_SdCardSdr104       },
                 { BusWidth_4Bit, SpeedMode_SdCardHighSpeed    },
@@ -947,6 +965,12 @@ namespace ams::sdmmc::impl {
         /* Get the status. */
         if (switch_function == SdCardSwitchFunction_CheckSupportedFunction) {
             R_TRY(this->IssueCommandCheckSupportedFunction(dst, dst_size));
+
+            /* Runtime check: if the card reports DDR200 support, log it (allowed regardless of compile flag). */
+            if (IsSupportedAccessMode(static_cast<const u8 *>(dst), static_cast<SwitchFunctionAccessMode>(5))) {
+                BaseDeviceAccessor::PushErrorLog(true, "Card reports DDR200 support (runtime check)");
+            }
+
         } else {
             SwitchFunctionAccessMode am;
             switch (switch_function) {
@@ -955,6 +979,9 @@ namespace ams::sdmmc::impl {
                 case SdCardSwitchFunction_CheckSdr50:     am = SwitchFunctionAccessMode_Sdr50;     break;
                 case SdCardSwitchFunction_CheckSdr104:    am = SwitchFunctionAccessMode_Sdr104;    break;
                 case SdCardSwitchFunction_CheckDdr50:     am = SwitchFunctionAccessMode_Ddr50;     break;
+                #ifdef SDMMC_UHS_DDR200_SUPPORT
+                    case SdCardSwitchFunction_CheckDdr200:    am = SwitchFunctionAccessMode_Ddr200;    break;
+                #endif
                 AMS_UNREACHABLE_DEFAULT_CASE();
             }
 
@@ -995,6 +1022,11 @@ namespace ams::sdmmc::impl {
             case SpeedMode_SdCardDdr50:
                 am = SwitchFunctionAccessMode_Ddr50;
                 break;
+            #ifdef SDMMC_UHS_DDR200_SUPPORT
+                case SpeedMode_SdCardDdr200:
+                am = SwitchFunctionAccessMode_Ddr200;
+                break;
+            #endif
             AMS_UNREACHABLE_DEFAULT_CASE();
         }
 

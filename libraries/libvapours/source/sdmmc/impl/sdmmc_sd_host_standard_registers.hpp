@@ -61,7 +61,8 @@ namespace ams::sdmmc::impl {
         volatile uint16_t preset_for_sdr50;
         volatile uint16_t preset_for_sdr104;
         volatile uint16_t preset_for_ddr50;
-        volatile uint32_t _0x70[0x23];
+        volatile uint16_t preset_for_ddr200;
+        volatile uint32_t _0x71[0x22];//shrunk for ddr200 support bit
         volatile uint16_t slot_int_status;
         volatile uint16_t host_version;
 
@@ -180,6 +181,7 @@ namespace ams::sdmmc::impl {
     DEFINE_SD_REG_THREE_BIT_ENUM(HOST_CONTROL2_UHS_MODE_SELECT, 0, SDR12, SDR25, SDR50, SDR104, DDR50, HS400, RSVD6, UHS_II);
 
     constexpr inline auto SD_HOST_STANDARD_HOST_CONTROL2_UHS_MODE_SELECT_HS200 = SD_HOST_STANDARD_HOST_CONTROL2_UHS_MODE_SELECT_SDR104;
+    constexpr inline auto SD_HOST_STANDARD_HOST_CONTROL2_UHS_MODE_SELECT_DDR200 = SD_HOST_STANDARD_HOST_CONTROL2_UHS_MODE_SELECT_DDR50;
 
     DEFINE_SD_REG_BIT_ENUM(HOST_CONTROL2_1_8V_SIGNALING_ENABLE, 3, 3_3V_SIGNALING, 1_8V_SIGNALING);
     DEFINE_SD_REG_BIT_ENUM(HOST_CONTROL2_EXECUTE_TUNING, 6, TUNING_COMPLETED, EXECUTE_TUNING);

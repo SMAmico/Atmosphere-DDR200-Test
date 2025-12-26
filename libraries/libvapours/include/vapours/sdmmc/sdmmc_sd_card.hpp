@@ -25,6 +25,7 @@ namespace ams::sdmmc {
         SdCardSwitchFunction_CheckSdr50             = 3,
         SdCardSwitchFunction_CheckSdr104            = 4,
         SdCardSwitchFunction_CheckDdr50             = 5,
+            SdCardSwitchFunction_CheckDdr200            = 6,
     };
 
     constexpr inline size_t SdCardScrSize                  = 0x08;
