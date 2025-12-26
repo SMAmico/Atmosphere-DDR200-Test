@@ -150,7 +150,7 @@ namespace ams::sdmmc::impl {
                     break;
                 #ifdef SDMMC_UHS_DDR200_SUPPORT//DDR200 implementation case
                 case SwitchFunctionAccessMode_Ddr200:
-                    *out_sm = SpeedMode_Ddr200;
+                    *out_sm = SpeedMode_SdCardDdr200;
                     break;
                 #endif
                 default:
@@ -665,7 +665,7 @@ namespace ams::sdmmc::impl {
         } StartupParameters[] = {
             #if defined(AMS_SDMMC_ENABLE_SD_UHS_I)
                 #ifdef SDMMC_UHS_DDR200_SUPPORT
-                { BusWidth_4Bit, SpeedMode_Ddr200            },//try first to start up with ddr200 if enabled
+                { BusWidth_4Bit, SpeedMode_SdCardDdr200            },//try first to start up with ddr200 if enabled
                 #endif
                 { BusWidth_4Bit, SpeedMode_SdCardSdr104       },
                 { BusWidth_4Bit, SpeedMode_SdCardSdr104       },
@@ -951,7 +951,7 @@ namespace ams::sdmmc::impl {
         R_SUCCEED();
     }
 
-    Result SdCardDeviceAccessor::GetSdCardSwitchFunctionStatus(void *dst, size_t dst_size, SdCardSwitchFunction switch_function) const {
+    Result SdCardDeviceAccessor::GetSdCardSwitchFunctionStatus(void *dst, size_t dst_size, SdCardSwitchFunction switch_function) {
         /* Acquire exclusive access to the device. */
         AMS_SDMMC_LOCK_SD_CARD_DEVICE_MUTEX();
 

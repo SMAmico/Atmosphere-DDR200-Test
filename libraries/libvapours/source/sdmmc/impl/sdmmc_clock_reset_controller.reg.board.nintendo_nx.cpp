@@ -254,7 +254,7 @@ namespace ams::sdmmc::impl::ClockResetController::reg {
                     *out_actual_frequency_khz = 204'000;
                     n                         = 2;
                     break;
-                #ifdef(SDMMC_UHS_DDR200_SUPPORT);//DDR200 implementation case
+                #ifdef SDMMC_UHS_DDR200_SUPPORT //DDR200 implementation case
                 case 400'000:
                     #if defined(AMS_SDMMC_SET_PLLC4_BASE)
                     *out_actual_frequency_khz = 399'360;

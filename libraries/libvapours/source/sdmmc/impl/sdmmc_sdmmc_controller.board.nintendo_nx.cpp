@@ -162,7 +162,7 @@ namespace ams::sdmmc::impl {
                     *out_x                          = 2;
                     break;
                 #ifdef SDMMC_UHS_DDR200_SUPPORT//DDR200 implementation case
-                    case SpeedMode_Ddr200:
+                    case SpeedMode_SdCardDdr200:
                         *out_target_clock_frequency_khz = 400000;
                         *out_x                          = 2;
                         break;
@@ -400,7 +400,7 @@ namespace ams::sdmmc::impl {
                 reg::ReadWrite(m_sdmmc_registers->sd_host_standard_registers.host_control2, SD_REG_BITS_ENUM(HOST_CONTROL2_1_8V_SIGNALING_ENABLE, 1_8V_SIGNALING));
                 break;
             #ifdef SDMMC_UHS_DDR200_SUPPORT//DDR200 implementation case
-                case SpeedMode_Ddr200:
+                case SpeedMode_SdCardDdr200:
                     /* Set as DDR200, 1.8V. */
                     reg::ReadWrite(m_sdmmc_registers->sd_host_standard_registers.host_control2, SD_REG_BITS_ENUM(HOST_CONTROL2_UHS_MODE_SELECT, DDR200));
                     reg::ReadWrite(m_sdmmc_registers->sd_host_standard_registers.host_control2, SD_REG_BITS_ENUM(HOST_CONTROL2_1_8V_SIGNALING_ENABLE, 1_8V_SIGNALING));
@@ -446,7 +446,7 @@ namespace ams::sdmmc::impl {
         #ifdef SDMMC_UHS_DDR200_SUPPORT
 
         /* If speed mode is DDR200, perform 1.8V switch and drive-strength calibration similar to SwitchToSdr12. */
-        if (speed_mode == SpeedMode_Ddr200) {
+        if (speed_mode == SpeedMode_SdCardDdr200) {
 
             /* Ensure control and switch physical voltage to 1.8V. */
             SdHostStandardController::EnsureControl();
@@ -968,11 +968,9 @@ namespace ams::sdmmc::impl {
                 num_tries      = 256;
                 reg::ReadWrite(m_sdmmc_registers->vendor_tuning_cntrl0, SD_REG_BITS_ENUM(VENDOR_TUNING_CNTRL0_NUM_TUNING_ITERATIONS, TRIES_256));
                 break;
-            case SpeedMode_Ddr200:
+            case SpeedMode_SdCardDdr200:
                 #ifdef SDMMC_UHS_DDR200_SUPPORT
                 return this->Tuning_Ddr200(command_index);//passes CMD19 with target_sm of DDR200
-                #else
-                AMS_UNREACHABLE();
                 #endif
             AMS_UNREACHABLE_DEFAULT_CASE();
         }

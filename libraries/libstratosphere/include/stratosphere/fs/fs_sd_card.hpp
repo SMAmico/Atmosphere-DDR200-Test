@@ -32,7 +32,8 @@ namespace ams::fs {
         SdCardSpeedMode_Sdr50          = 5,
         SdCardSpeedMode_Sdr104         = 6,
         SdCardSpeedMode_Ddr50          = 7,
-        SdCardSpeedMode_Unknown        = 8,
+        SdCardSpeedMode_Ddr200         = 8,//ddr200
+        SdCardSpeedMode_Unknown        = 9,
     };
 
     struct EncryptionSeed {

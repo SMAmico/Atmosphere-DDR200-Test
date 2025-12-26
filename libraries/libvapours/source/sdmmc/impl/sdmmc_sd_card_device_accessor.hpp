@@ -182,7 +182,7 @@ namespace ams::sdmmc::impl {
             void AwakenSdCard();
             Result GetSdCardProtectedAreaCapacity(u32 *out_num_sectors) const;
             Result GetSdCardScr(void *dst, size_t dst_size) const;
-            Result GetSdCardSwitchFunctionStatus(void *dst, size_t dst_size, SdCardSwitchFunction switch_function) const;
+            Result GetSdCardSwitchFunctionStatus(void *dst, size_t dst_size, SdCardSwitchFunction switch_function);
             Result GetSdCardCurrentConsumption(u16 *out_current_consumption, SpeedMode speed_mode) const;
             Result GetSdCardSdStatus(void *dst, size_t dst_size) const;
 
