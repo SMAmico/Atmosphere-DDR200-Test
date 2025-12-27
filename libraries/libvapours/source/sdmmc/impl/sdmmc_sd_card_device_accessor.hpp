@@ -169,7 +169,11 @@ namespace ams::sdmmc::impl {
                 m_work_buffer      = nullptr;
                 m_work_buffer_size = 0;
                 m_max_bus_width    = BusWidth_4Bit;
+                #ifdef SDMMC_UHS_DDR200_SUPPORT
+                m_max_speed_mode   = SpeedMode_SdCardDdr200;
+                #else
                 m_max_speed_mode   = SpeedMode_SdCardSdr104;
+                #endif
                 m_is_initialized   = false;
             }
 

@@ -94,7 +94,11 @@ namespace ams::sdmmc::impl {
         constexpr bool IsSupportedAccessMode(const u8 *status, SwitchFunctionAccessMode access_mode) {
             AMS_ABORT_UNLESS(status != nullptr);
 
-            return (status[13] & (1u << access_mode)) != 0;
+            if (access_mode == SwitchFunctionAccessMode_Ddr200) {
+                return (status[12] & (1u << 14)) != 0;
+            } else {
+                return (status[13] & (1u << access_mode)) != 0;
+            }
         }
 
         constexpr u8 GetAccessModeFromFunctionSelection(const u8 *status) {
@@ -251,7 +255,12 @@ namespace ams::sdmmc::impl {
         AMS_ABORT_UNLESS(dst_size >= SdCardSwitchFunctionStatusSize);
 
         /* Get the argument. */
-        const u32 arg = (set_function ? (1u << 31) : (0u << 31)) | 0x00FFFFF0 | static_cast<u32>(access_mode);
+        u32 arg;
+        if (access_mode == SwitchFunctionAccessMode_Ddr200) {
+            arg = (set_function ? (1u << 31) : (0u << 31)) | (14 << 4) | 0;
+        } else {
+            arg = (set_function ? (1u << 31) : (0u << 31)) | 0x00FFFFF0 | static_cast<u32>(access_mode);
+        }
 
         /* Issue the command. */
         constexpr ResponseType CommandResponseType = ResponseType_R1;
