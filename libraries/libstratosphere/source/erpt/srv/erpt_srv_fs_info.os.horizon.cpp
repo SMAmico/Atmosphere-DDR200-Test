@@ -221,11 +221,9 @@ namespace ams::erpt::srv {
                         case fs::SdCardSpeedMode_Ddr50:
                             speed_mode_name = "Ddr50";
                             break;
-                        #ifdef SDMMC_UHS_DDR200_SUPPORT
                         case fs::SdCardSpeedMode_Ddr200:
                             speed_mode_name = "Ddr200";
                             break;
-                        #endif
                         case fs::SdCardSpeedMode_Unknown:
                             speed_mode_name = "Unknown";
                             break;

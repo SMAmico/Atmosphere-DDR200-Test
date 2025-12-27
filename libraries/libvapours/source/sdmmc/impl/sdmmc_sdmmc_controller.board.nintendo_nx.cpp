@@ -872,7 +872,7 @@ namespace ams::sdmmc::impl {
         const int num_iter = 128;
 
         /* Configure manual tuning parameters (128 tries, multiplier 1). */
-        reg::ReadWrite(m_sdmmc_registers->vendor_tuning_cntrl1, 0);
+
         reg::ReadWrite(m_sdmmc_registers->vendor_tuning_cntrl0, SD_REG_BITS_ENUM(VENDOR_TUNING_CNTRL0_NUM_TUNING_ITERATIONS, TRIES_128));
         reg::ReadWrite(m_sdmmc_registers->vendor_tuning_cntrl0, SD_REG_BITS_VALUE(VENDOR_TUNING_CNTRL0_MUL_M, 1));
         reg::ReadWrite(m_sdmmc_registers->vendor_tuning_cntrl0, SD_REG_BITS_ENUM(VENDOR_TUNING_CNTRL0_TAP_VALUE_UPDATED_BY_HW, UPDATED_BY_HW));
@@ -887,7 +887,7 @@ namespace ams::sdmmc::impl {
             static_cast<void>(this->IssueTuningCommand(command_index));
 
             const u32 hostctl2 = reg::Read(m_sdmmc_registers->sd_host_standard_registers.host_control2);
-            const int sampled = (hostctl2 >> SDHCI_CTRL_TUNED_CLK_SHIFT) & 1;
+            const int sampled = (hostctl2 >> 7) & 1; //TUNED_CLOCK result bit shift offset
             result[i / 32] |= static_cast<u32>(sampled) << (i % 32);
 
             /* If hardware cleared execute tuning, stop early. */
@@ -896,6 +896,7 @@ namespace ams::sdmmc::impl {
         }
 
         /* Find the largest consecutive stable window and pick its center as the tap. */
+        const u32 INVALID_TAP = 0xFFFFFFFF;
         u32 tap_start = 0x100;
         u32 win_size = 0;
         u32 best_tap = 0;
@@ -968,9 +969,11 @@ namespace ams::sdmmc::impl {
                 num_tries      = 256;
                 reg::ReadWrite(m_sdmmc_registers->vendor_tuning_cntrl0, SD_REG_BITS_ENUM(VENDOR_TUNING_CNTRL0_NUM_TUNING_ITERATIONS, TRIES_256));
                 break;
-            case SpeedMode_SdCardDdr200:
                 #ifdef SDMMC_UHS_DDR200_SUPPORT
+            case SpeedMode_SdCardDdr200:
+                
                 return this->Tuning_Ddr200(command_index);//passes CMD19 with target_sm of DDR200
+                break;
                 #endif
             AMS_UNREACHABLE_DEFAULT_CASE();
         }

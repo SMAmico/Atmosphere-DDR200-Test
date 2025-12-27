@@ -47,7 +47,7 @@ namespace ams::sdmmc {
         SpeedMode_SdCardDdr50           = 12,
         SpeedMode_GcAsicFpgaSpeed       = 13,
         SpeedMode_GcAsicSpeed           = 14,
-            SpeedMode_SdCardDdr200                = 15,
+        SpeedMode_SdCardDdr200          = 15,
     };
 
     enum Port {

@@ -102,7 +102,7 @@ namespace ams::sdmmc::impl {
         SwitchFunctionAccessMode_Sdr50      = 2,
         SwitchFunctionAccessMode_Sdr104     = 3,
         SwitchFunctionAccessMode_Ddr50      = 4,
-            SwitchFunctionAccessMode_Ddr200     = 5,
+        SwitchFunctionAccessMode_Ddr200     = 5,
     };
 
     class SdCardDeviceAccessor : public BaseDeviceAccessor {

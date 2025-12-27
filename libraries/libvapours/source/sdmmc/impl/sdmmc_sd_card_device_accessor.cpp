@@ -968,7 +968,7 @@ namespace ams::sdmmc::impl {
 
             /* Runtime check: if the card reports DDR200 support, log it (allowed regardless of compile flag). */
             if (IsSupportedAccessMode(static_cast<const u8 *>(dst), static_cast<SwitchFunctionAccessMode>(5))) {
-                BaseDeviceAccessor::PushErrorLog(true, "Card reports DDR200 support (runtime check)");
+                BaseDeviceAccessor::PushErrorLog(true, "Card reports DDR200 support");
             }
 
         } else {
