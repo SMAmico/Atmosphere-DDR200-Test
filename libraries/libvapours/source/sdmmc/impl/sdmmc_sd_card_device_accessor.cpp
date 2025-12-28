@@ -513,13 +513,6 @@ namespace ams::sdmmc::impl {
         R_TRY(this->IssueCommandCheckSupportedFunction(wb, wb_size));
         SwitchFunctionAccessMode target_am;
         SpeedMode target_sm;
-        if (max_sm == SpeedMode_SdCardSdr104 && IsSupportedAccessMode(static_cast<const u8 *>(wb), SwitchFunctionAccessMode_Sdr104)) {
-            target_am = SwitchFunctionAccessMode_Sdr104;
-            target_sm = SpeedMode_SdCardSdr104;
-        } else if ((max_sm == SpeedMode_SdCardSdr104 || max_sm == SpeedMode_SdCardSdr50) && IsSupportedAccessMode(static_cast<const u8 *>(wb), SwitchFunctionAccessMode_Sdr50)) {
-            target_am = SwitchFunctionAccessMode_Sdr50;
-            target_sm = SpeedMode_SdCardSdr50;
-        }
         #ifdef SDMMC_UHS_DDR200_SUPPORT//DDR200 implementation case
             else if ((max_sm == SpeedMode_SdCardDdr200 && IsSupportedAccessMode(static_cast<const u8 *>(wb), SwitchFunctionAccessMode_Ddr200))) {
                 target_am = SwitchFunctionAccessMode_Ddr200;
@@ -529,7 +522,13 @@ namespace ams::sdmmc::impl {
                 BaseDeviceAccessor::PushErrorLog(true, "DDR200 supported: switching to DDR200");
             }
         #endif
-         else {
+        if (max_sm == SpeedMode_SdCardSdr104 && IsSupportedAccessMode(static_cast<const u8 *>(wb), SwitchFunctionAccessMode_Sdr104)) {
+            target_am = SwitchFunctionAccessMode_Sdr104;
+            target_sm = SpeedMode_SdCardSdr104;
+        } else if ((max_sm == SpeedMode_SdCardSdr104 || max_sm == SpeedMode_SdCardSdr50) && IsSupportedAccessMode(static_cast<const u8 *>(wb), SwitchFunctionAccessMode_Sdr50)) {
+            target_am = SwitchFunctionAccessMode_Sdr50;
+            target_sm = SpeedMode_SdCardSdr50;
+        } else {
             R_THROW(sdmmc::ResultSdCardNotSupportSdr104AndSdr50());
         }
 
@@ -613,7 +612,7 @@ namespace ams::sdmmc::impl {
         m_sd_card_device.SetRca(0);
 
         /* Go to ready state. */
-        const bool can_use_uhs_i_mode = (max_bw != BusWidth_1Bit) && (max_sm == SpeedMode_SdCardSdr104 || max_sm == SpeedMode_SdCardSdr50);
+        const bool can_use_uhs_i_mode = (max_bw != BusWidth_1Bit) && (max_sm == SpeedMode_SdCardSdr104 || max_sm == SpeedMode_SdCardSdr50 || max_sm == SpeedMode_SdCardDdr200);
         const bool uhs_i_supported    = hc->IsSupportedTuning() && hc->IsSupportedBusPower(BusPower_1_8V);
         R_TRY(this->ChangeToReadyState(spec_under_2, can_use_uhs_i_mode && uhs_i_supported));
 
