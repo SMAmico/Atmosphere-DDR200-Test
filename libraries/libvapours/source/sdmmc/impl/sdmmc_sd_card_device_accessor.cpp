@@ -90,12 +90,18 @@ namespace ams::sdmmc::impl {
         constexpr bool IsSupportedBusWidth4Bit(u8 sd_bw) {
             return (sd_bw & 0x4) != 0;
         }
-
+        /*
+        DDR200 is not technically an accessmode, just a read speed
+        when looking from the outside. however, it is useful to call this accessmode
+        "DDR200" to make it obvious where the implementation is. as such, the support for DDR200
+        'accessmode' is bundled to the command system group in bytes 10-11 instead of the access mode group.
+        */
         constexpr bool IsSupportedAccessMode(const u8 *status, SwitchFunctionAccessMode access_mode) {
             AMS_ABORT_UNLESS(status != nullptr);
 
             if (access_mode == SwitchFunctionAccessMode_Ddr200) {
-                return (status[12] & (1u << 14)) != 0;
+            
+                return ((status[11] | (status[10] << 8)) & (1u << 14)) != 0;//checks bit 14 in cmd sys
             } else {
                 return (status[13] & (1u << access_mode)) != 0;
             }
@@ -107,7 +113,18 @@ namespace ams::sdmmc::impl {
         }
 
         constexpr bool IsAccessModeInFunctionSelection(const u8 *status, SwitchFunctionAccessMode mode) {
+
             return GetAccessModeFromFunctionSelection(status) == static_cast<u8>(mode);
+        }
+
+        constexpr bool IsSupportedCommandSystemMode(const u8* status, SwitchFunctionAccessMode mode) {
+            u16 cmdsys = status[11] | (status[10] << 8);
+            return (cmdsys & (1u << static_cast<u8>(mode))) != 0;
+        }
+
+        constexpr bool IsCommandSystemModeSelected(const u8* status, SwitchFunctionAccessMode mode) {
+            u8 selected = (status[16] >> 4) & 0xF; 
+            return selected == static_cast<u8>(mode);
         }
 
         constexpr u16 GetMaximumCurrentConsumption(const u8 *status) {
@@ -128,6 +145,13 @@ namespace ams::sdmmc::impl {
             AMS_ABORT_UNLESS(out_sm != nullptr);
 
             /* Get the access mode. */
+            #ifdef SDMMC_UHS_DDR200_SUPPORT//DDR200 implementation case
+            if (IsCommandSystemModeSelected(status, SwitchFunctionAccessMode_Ddr200)) {
+                    *out_sm = SpeedMode_SdCardDdr200;
+                    R_SUCCEED();
+            } 
+            #endif
+            //we should have already checked DDR200 support by this point, so we can proceed into checking access mode
             switch (static_cast<SwitchFunctionAccessMode>(GetAccessModeFromFunctionSelection(status))) {
                 case SwitchFunctionAccessMode_Default:
                     if (is_uhs_i) {
@@ -152,11 +176,6 @@ namespace ams::sdmmc::impl {
                 case SwitchFunctionAccessMode_Ddr50:
                     *out_sm = SpeedMode_SdCardDdr50;
                     break;
-                #ifdef SDMMC_UHS_DDR200_SUPPORT//DDR200 implementation case
-                case SwitchFunctionAccessMode_Ddr200:
-                    *out_sm = SpeedMode_SdCardDdr200;
-                    break;
-                #endif
                 default:
                     R_THROW(sdmmc::ResultUnexpectedSdCardSwitchFunctionStatus());
             }
@@ -254,10 +273,13 @@ namespace ams::sdmmc::impl {
         AMS_ABORT_UNLESS(dst != nullptr);
         AMS_ABORT_UNLESS(dst_size >= SdCardSwitchFunctionStatusSize);
 
-        /* Get the argument. */
+        /* Get the argument.
+        For DDR200, this sets the bits in the command system to the ddr200 value (14) */
         u32 arg;
         if (access_mode == SwitchFunctionAccessMode_Ddr200) {
-            arg = (set_function ? (1u << 31) : (0u << 31)) | (14 << 4) | 0;
+            arg = (set_function ? (1u << 31) : (0u << 31)) | 0x00FFFFFF;
+            arg &= ~(0xF << 4);
+            arg |= (static_cast<u32>(access_mode) << 4);
         } else {
             arg = (set_function ? (1u << 31) : (0u << 31)) | 0x00FFFFF0 | static_cast<u32>(access_mode);
         }
@@ -491,15 +513,24 @@ namespace ams::sdmmc::impl {
     Result SdCardDeviceAccessor::SwitchAccessMode(SwitchFunctionAccessMode access_mode, void *wb, size_t wb_size) {
         /* Issue command to check if we can switch access mode. */
         R_TRY(this->IssueCommandSwitchAccessMode(wb, wb_size, false, access_mode));
-        R_UNLESS(IsAccessModeInFunctionSelection(static_cast<const u8 *>(wb), access_mode), sdmmc::ResultSdCardCannotSwitchAccessMode());
 
+        if(access_mode == SwitchFunctionAccessMode_Ddr200) {
+            R_UNLESS(IsCommandSystemModeSelected(static_cast<const u8 *>(wb), access_mode), sdmmc::ResultSdCardCannotSwitchAccessMode());
+         } else {
+            R_UNLESS(IsAccessModeInFunctionSelection(static_cast<const u8 *>(wb), access_mode), sdmmc::ResultSdCardCannotSwitchAccessMode());
+         }
         /* Check if we can accept the resulting current consumption. */
         constexpr u16 AcceptableCurrentLimit = 800; /* mA */
         R_UNLESS(GetMaximumCurrentConsumption(static_cast<const u8 *>(wb)) < AcceptableCurrentLimit, sdmmc::ResultSdCardUnacceptableCurrentConsumption());
 
         /* Switch the access mode. */
         R_TRY(this->IssueCommandSwitchAccessMode(wb, wb_size, true, access_mode));
-        R_UNLESS(IsAccessModeInFunctionSelection(static_cast<const u8 *>(wb), access_mode), sdmmc::ResultSdCardFailedSwitchAccessMode());
+
+        if(access_mode == SwitchFunctionAccessMode_Ddr200) {
+            R_UNLESS(IsCommandSystemModeSelected(static_cast<const u8 *>(wb), access_mode), sdmmc::ResultSdCardCannotSwitchAccessMode());
+         } else {
+            R_UNLESS(IsAccessModeInFunctionSelection(static_cast<const u8 *>(wb), access_mode), sdmmc::ResultSdCardCannotSwitchAccessMode());
+         }
 
         R_SUCCEED();
     }
@@ -514,13 +545,13 @@ namespace ams::sdmmc::impl {
         SwitchFunctionAccessMode target_am;
         SpeedMode target_sm;
         #ifdef SDMMC_UHS_DDR200_SUPPORT//DDR200 implementation case
-            else if ((max_sm == SpeedMode_SdCardDdr200 && IsSupportedAccessMode(static_cast<const u8 *>(wb), SwitchFunctionAccessMode_Ddr200))) {
+            if ((max_sm == SpeedMode_SdCardDdr200 && IsSupportedCommandSystemMode(static_cast<const u8 *>(wb), SwitchFunctionAccessMode_Ddr200))) {
                 target_am = SwitchFunctionAccessMode_Ddr200;
                 target_sm = SpeedMode_SdCardDdr200;
                 // switch accessmode to ddr200 only if max speedmode is ddr200
                 /* Log that DDR200 is supported and will be selected. */
                 BaseDeviceAccessor::PushErrorLog(true, "DDR200 supported: switching to DDR200");
-            }
+            } else
         #endif
         if (max_sm == SpeedMode_SdCardSdr104 && IsSupportedAccessMode(static_cast<const u8 *>(wb), SwitchFunctionAccessMode_Sdr104)) {
             target_am = SwitchFunctionAccessMode_Sdr104;
@@ -666,6 +697,7 @@ namespace ams::sdmmc::impl {
     }
 
     Result SdCardDeviceAccessor::OnActivate() {
+
         /* Define the possible startup parameters. */
         constexpr const struct {
             BusWidth bus_width;
@@ -673,7 +705,7 @@ namespace ams::sdmmc::impl {
         } StartupParameters[] = {
             #if defined(AMS_SDMMC_ENABLE_SD_UHS_I)
                 #ifdef SDMMC_UHS_DDR200_SUPPORT
-                { BusWidth_4Bit, SpeedMode_SdCardDdr200            },//try first to start up with ddr200 if enabled
+                { BusWidth_4Bit, SpeedMode_SdCardDdr200       },//try first to start up with ddr200 if enabled
                 #endif
                 { BusWidth_4Bit, SpeedMode_SdCardSdr104       },
                 { BusWidth_4Bit, SpeedMode_SdCardSdr104       },
@@ -975,7 +1007,7 @@ namespace ams::sdmmc::impl {
             R_TRY(this->IssueCommandCheckSupportedFunction(dst, dst_size));
 
             /* Runtime check: if the card reports DDR200 support, log it (allowed regardless of compile flag). */
-            if (IsSupportedAccessMode(static_cast<const u8 *>(dst), static_cast<SwitchFunctionAccessMode>(5))) {
+            if (IsSupportedCommandSystemMode(static_cast<const u8 *>(dst), static_cast<SwitchFunctionAccessMode>(14))) {
                 BaseDeviceAccessor::PushErrorLog(true, "Card reports DDR200 support");
             }
 
@@ -1040,8 +1072,11 @@ namespace ams::sdmmc::impl {
 
         /* Check that the mode is supported. */
         R_TRY(this->IssueCommandSwitchAccessMode(m_work_buffer, m_work_buffer_size, false, am));
+        if(am == SwitchFunctionAccessMode_Ddr200) {
+        R_UNLESS(IsSupportedCommandSystemMode(static_cast<const u8 *>(m_work_buffer), am), sdmmc::ResultSdCardNotSupportAccessMode());
+        } else {
         R_UNLESS(IsSupportedAccessMode(static_cast<const u8 *>(m_work_buffer), am), sdmmc::ResultSdCardNotSupportAccessMode());
-
+        }
         /* Get the current consumption. */
         AMS_ABORT_UNLESS(out_current_consumption != nullptr);
         *out_current_consumption = GetMaximumCurrentConsumption(static_cast<const u8 *>(m_work_buffer));

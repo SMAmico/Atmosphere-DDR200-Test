@@ -448,6 +448,10 @@ namespace ams::sdmmc::impl {
         /* If speed mode is DDR200, perform 1.8V switch and drive-strength calibration similar to SwitchToSdr12. */
         if (speed_mode == SpeedMode_SdCardDdr200) {
 
+            /* Disable clock and verify DAT lines are low before voltage switch (safety check). */
+            reg::ReadWrite(m_sdmmc_registers->sd_host_standard_registers.clock_control, SD_REG_BITS_ENUM(CLOCK_CONTROL_SD_CLOCK_ENABLE, DISABLE));
+            R_UNLESS(reg::HasValue(m_sdmmc_registers->sd_host_standard_registers.present_state, SD_REG_BITS_VALUE(PRESENT_STATE_DAT0_3_LINE_SIGNAL_LEVEL, 0b0000)), sdmmc::ResultSdCardNotReadyToVoltageSwitch());
+
             /* Ensure control and switch physical voltage to 1.8V. */
             SdHostStandardController::EnsureControl();
             R_TRY(this->LowerBusPower());
@@ -868,83 +872,72 @@ namespace ams::sdmmc::impl {
 
         #ifdef SDMMC_UHS_DDR200_SUPPORT
     Result SdmmcController::Tuning_Ddr200(u32 command_index) {
-        std::array<u32, 8> result{};// includes.cpp includes array
-        const int num_iter = 128;
+        const int num_taps = 128;
+        std::array<bool, 128> good_taps = {};
 
-        /* Configure manual tuning parameters (128 tries, multiplier 1). */
-
-        reg::ReadWrite(m_sdmmc_registers->vendor_tuning_cntrl0, SD_REG_BITS_ENUM(VENDOR_TUNING_CNTRL0_NUM_TUNING_ITERATIONS, TRIES_128));
-        reg::ReadWrite(m_sdmmc_registers->vendor_tuning_cntrl0, SD_REG_BITS_VALUE(VENDOR_TUNING_CNTRL0_MUL_M, 1));
-        reg::ReadWrite(m_sdmmc_registers->vendor_tuning_cntrl0, SD_REG_BITS_ENUM(VENDOR_TUNING_CNTRL0_TAP_VALUE_UPDATED_BY_HW, UPDATED_BY_HW));
-
-        /* Request hardware to execute tuning. */
-        reg::ReadWrite(m_sdmmc_registers->sd_host_standard_registers.host_control2, SD_REG_BITS_ENUM(HOST_CONTROL2_EXECUTE_TUNING, EXECUTE_TUNING));
-
-        for (int i = 0; i < num_iter; ++i) {
+        for (int tap = 0; tap < num_taps; ++tap) {
             R_TRY(this->CheckRemoved());
 
-            /* Issue the tuning command and record the sampled result bit. */
-            static_cast<void>(this->IssueTuningCommand(command_index));
+            /* Disable clock to set tap. */
+            reg::ReadWrite(m_sdmmc_registers->sd_host_standard_registers.clock_control, SD_REG_BITS_ENUM(CLOCK_CONTROL_SD_CLOCK_ENABLE, DISABLE));
 
-            const u32 hostctl2 = reg::Read(m_sdmmc_registers->sd_host_standard_registers.host_control2);
-            const int sampled = (hostctl2 >> 7) & 1; //TUNED_CLOCK result bit shift offset
-            result[i / 32] |= static_cast<u32>(sampled) << (i % 32);
+            /* Set tap value updated by software. */
+            reg::ReadWrite(m_sdmmc_registers->vendor_tuning_cntrl0, SD_REG_BITS_ENUM(VENDOR_TUNING_CNTRL0_TAP_VALUE_UPDATED_BY_HW, NOT_UPDATED_BY_HW));
 
-            /* If hardware cleared execute tuning, stop early. */
-            if (!reg::HasValue(m_sdmmc_registers->sd_host_standard_registers.host_control2, SD_REG_BITS_ENUM(HOST_CONTROL2_EXECUTE_TUNING, EXECUTE_TUNING)))
-                break;
-        }
+            /* Set the inbound tap value. */
+            reg::ReadWrite(m_sdmmc_registers->vendor_clock_cntrl, SD_REG_BITS_VALUE(VENDOR_CLOCK_CNTRL_TAP_VAL, tap));
 
-        /* Find the largest consecutive stable window and pick its center as the tap. */
-        const u32 INVALID_TAP = 0xFFFFFFFF;
-        u32 tap_start = 0x100;
-        u32 win_size = 0;
-        u32 best_tap = 0;
-        u32 best_size = 0;
+            /* Enable clock. */
+            reg::ReadWrite(m_sdmmc_registers->sd_host_standard_registers.clock_control, SD_REG_BITS_ENUM(CLOCK_CONTROL_SD_CLOCK_ENABLE, ENABLE));
 
-        for (u32 i = 0; i < static_cast<u32>(num_iter); ++i) {
-            u32 iter_end = (i == (static_cast<u32>(num_iter) - 1)) ? 1 : 0;
-            u32 stable = (result[i / 32] & BIT(i % 32)) != 0;
-
-            if (stable && !iter_end) {
-                if (tap_start == INVALID_TAP)
-                    tap_start = i;
-
-                ++win_size;
-            } else {
-                if (tap_start != INVALID_TAP) {
-                    u32 tap_end = !iter_end ? (i - 1) : i;
-
-                    if (win_size > best_size) {
-                        best_tap = (tap_start + tap_end) / 2;
-                        best_size = win_size + iter_end;
-                    }
-
-                    tap_start = INVALID_TAP;
-                    win_size = 0;
-                }
+            /* Issue the tuning command. */
+            Result res = this->IssueTuningCommand(command_index);
+            if (R_SUCCEEDED(res)) {
+                good_taps[tap] = true;
             }
         }
 
-        /* Fail if we didn't find a suitable window. */
-        R_UNLESS((best_tap && best_size >= SAMPLING_WINDOW_SIZE_MIN), sdmmc::ResultTuningFailed());
-
-        /* Check if we're using the tuned clock. */
-        R_UNLESS(reg::HasValue(m_sdmmc_registers->sd_host_standard_registers.host_control2, SD_REG_BITS_ENUM(HOST_CONTROL2_SAMPLING_CLOCK, USING_TUNED_CLOCK)), sdmmc::ResultTuningFailed());
-
-        /* Apply the chosen tap: disable card clock, update tap via vendor registers, then restore clock. */
-        const bool clock_enabled = reg::HasValue(m_sdmmc_registers->sd_host_standard_registers.clock_control, SD_REG_BITS_ENUM(CLOCK_CONTROL_SD_CLOCK_ENABLE, ENABLE));
-        if (clock_enabled) {
-            reg::ReadWrite(m_sdmmc_registers->sd_host_standard_registers.clock_control, SD_REG_BITS_ENUM(CLOCK_CONTROL_SD_CLOCK_ENABLE, DISABLE));
+        /* Find the largest consecutive window of good taps. */
+        u32 best_start = 0;
+        u32 best_size = 0;
+        u32 current_start = 0;
+        u32 current_size = 0;
+        for (int i = 0; i < num_taps; ++i) {
+            if (good_taps[i]) {
+                if (current_size == 0) {
+                    current_start = i;
+                }
+                current_size++;
+            } else {
+                if (current_size > best_size) {
+                    best_start = current_start;
+                    best_size = current_size;
+                }
+                current_size = 0;
+            }
+        }
+        if (current_size > best_size) {
+            best_start = current_start;
+            best_size = current_size;
         }
 
+        /* Fail if no good taps found. */
+        R_UNLESS(best_size > 0, sdmmc::ResultTuningFailed());
+
+        /* Set the tap to the middle of the best window. */
+        u32 best_tap = best_start + best_size / 2;
+
+        /* Disable clock to set final tap. */
+        reg::ReadWrite(m_sdmmc_registers->sd_host_standard_registers.clock_control, SD_REG_BITS_ENUM(CLOCK_CONTROL_SD_CLOCK_ENABLE, DISABLE));
+
+        /* Set tap value updated by software. */
         reg::ReadWrite(m_sdmmc_registers->vendor_tuning_cntrl0, SD_REG_BITS_ENUM(VENDOR_TUNING_CNTRL0_TAP_VALUE_UPDATED_BY_HW, NOT_UPDATED_BY_HW));
-        reg::ReadWrite(m_sdmmc_registers->vendor_clock_cntrl, SD_REG_BITS_VALUE(VENDOR_CLOCK_CNTRL_TAP_VAL, static_cast<u32>(best_tap)));
-        reg::ReadWrite(m_sdmmc_registers->vendor_tuning_cntrl0, SD_REG_BITS_ENUM(VENDOR_TUNING_CNTRL0_TAP_VALUE_UPDATED_BY_HW, UPDATED_BY_HW));
 
-        if (clock_enabled) {
-            reg::ReadWrite(m_sdmmc_registers->sd_host_standard_registers.clock_control, SD_REG_BITS_ENUM(CLOCK_CONTROL_SD_CLOCK_ENABLE, ENABLE));
-        }
+        /* Set the inbound tap value. */
+        reg::ReadWrite(m_sdmmc_registers->vendor_clock_cntrl, SD_REG_BITS_VALUE(VENDOR_CLOCK_CNTRL_TAP_VAL, best_tap));
+
+        /* Enable clock. */
+        reg::ReadWrite(m_sdmmc_registers->sd_host_standard_registers.clock_control, SD_REG_BITS_ENUM(CLOCK_CONTROL_SD_CLOCK_ENABLE, ENABLE));
 
         R_SUCCEED();
     }
