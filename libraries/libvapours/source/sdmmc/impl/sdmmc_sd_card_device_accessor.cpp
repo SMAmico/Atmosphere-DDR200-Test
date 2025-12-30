@@ -568,6 +568,7 @@ namespace ams::sdmmc::impl {
 
         /* Set the host controller speed mode and perform tuning using command index 19. */
         R_TRY(hc->SetSpeedMode(target_sm));
+        BaseDeviceAccessor::PushErrorLog(true, "SD Speed Mode set to: %d", static_cast<int>(target_sm));
         R_TRY(hc->Tuning(target_sm, 19));
 
         /* Check status. */
@@ -595,6 +596,7 @@ namespace ams::sdmmc::impl {
 
         /* Set the host controller speed mode. */
         R_TRY(BaseDeviceAccessor::GetHostController()->SetSpeedMode(SpeedMode_SdCardHighSpeed));
+        BaseDeviceAccessor::PushErrorLog(true, "SD Speed Mode set to: %d", static_cast<int>(SpeedMode_SdCardHighSpeed));
 
         R_SUCCEED();
     }
@@ -662,6 +664,7 @@ namespace ams::sdmmc::impl {
         /* Set the host controller speed mode to default if we're not in uhs i mode. */
         if (!m_sd_card_device.IsUhsIMode()) {
             R_TRY(hc->SetSpeedMode(SpeedMode_SdCardDefaultSpeed));
+            BaseDeviceAccessor::PushErrorLog(true, "SD Speed Mode set to: %d", static_cast<int>(SpeedMode_SdCardDefaultSpeed));
         }
 
         /* Issue select card command. */
