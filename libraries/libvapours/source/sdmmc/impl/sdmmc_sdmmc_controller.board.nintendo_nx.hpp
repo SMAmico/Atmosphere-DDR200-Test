@@ -197,7 +197,7 @@ namespace ams::sdmmc::impl {
 
             virtual Result Tuning(SpeedMode speed_mode, u32 command_index) override;
             #ifdef SDMMC_UHS_DDR200_SUPPORT
-            virtual Result Tuning_Ddr200(u32 command_index);
+            virtual Result Tuning_Ddr200(u32 command_index, int max_retries = 3);
             #endif
             virtual void SaveTuningStatusForHs400() override;
 

@@ -222,6 +222,7 @@ namespace ams::sdmmc::impl {
                     AMS_ABORT("UnregisterSdCardDetectionEventCallback without SdCardDetector");
                 #endif
             }
+            
     };
 
 }

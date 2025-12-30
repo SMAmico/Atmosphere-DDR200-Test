@@ -1006,7 +1006,7 @@ namespace ams::sdmmc::impl {
         if (switch_function == SdCardSwitchFunction_CheckSupportedFunction) {
             R_TRY(this->IssueCommandCheckSupportedFunction(dst, dst_size));
 
-            /* Runtime check: if the card reports DDR200 support, log it (allowed regardless of compile flag). */
+            /* Runtime check: if the card reports DDR200 support, log it. */
             if (IsSupportedCommandSystemMode(static_cast<const u8 *>(dst), static_cast<SwitchFunctionAccessMode>(14))) {
                 BaseDeviceAccessor::PushErrorLog(true, "Card reports DDR200 support");
             }
