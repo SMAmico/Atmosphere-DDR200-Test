@@ -269,7 +269,7 @@ namespace ams::sdmmc::impl::ClockResetController::reg {
                     n                         = 1;
                     #endif
                     break;
-                #endif
+                #endif 
                 AMS_UNREACHABLE_DEFAULT_CASE();
             }
 

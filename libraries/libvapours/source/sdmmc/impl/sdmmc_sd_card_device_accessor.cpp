@@ -544,13 +544,17 @@ namespace ams::sdmmc::impl {
         R_TRY(this->IssueCommandCheckSupportedFunction(wb, wb_size));
         SwitchFunctionAccessMode target_am;
         SpeedMode target_sm;
-        #ifdef SDMMC_UHS_DDR200_SUPPORT//DDR200 implementation case
+            #ifdef SDMMC_UHS_DDR200_SUPPORT//DDR200 implementation case
             if ((max_sm == SpeedMode_SdCardDdr200 && IsSupportedCommandSystemMode(static_cast<const u8 *>(wb), SwitchFunctionAccessMode_Ddr200))) {
                 target_am = SwitchFunctionAccessMode_Ddr200;
+                /* For DDR200 we request the DDR200 speed mode so the controller
+                 * will run the DDR200-specific tuning routine (Tuning_Ddr200).
+                 */
                 target_sm = SpeedMode_SdCardDdr200;
-                // switch accessmode to ddr200 only if max speedmode is ddr200
                 /* Log that DDR200 is supported and will be selected. */
-                BaseDeviceAccessor::PushErrorLog(true, "DDR200 supported: switching to DDR200");
+                #if defined(AMS_SDMMC_USE_LOGGER)
+                BaseDeviceAccessor::PushErrorLog(true, "Card supports DDR200, selecting DDR200 mode");
+                #endif
             } else
         #endif
         if (max_sm == SpeedMode_SdCardSdr104 && IsSupportedAccessMode(static_cast<const u8 *>(wb), SwitchFunctionAccessMode_Sdr104)) {
@@ -568,8 +572,34 @@ namespace ams::sdmmc::impl {
 
         /* Set the host controller speed mode and perform tuning using command index 19. */
         R_TRY(hc->SetSpeedMode(target_sm));
-        BaseDeviceAccessor::PushErrorLog(true, "SD Speed Mode set to: %d", static_cast<int>(target_sm));
-        R_TRY(hc->Tuning(target_sm, 19));
+
+        /* For DDR200, attempt retuning a few times before giving up so we don't
+         * immediately fall back to SDR104 if tuning transiently fails. */
+        if (target_sm == SpeedMode_SdCardDdr200) {
+            const int max_attempts = 3;
+            int attempt = 0;
+            Result tune_result;
+            do {
+                tune_result = hc->Tuning(target_sm, 19);
+                if (R_SUCCEEDED(tune_result)) break;
+
+                attempt++;
+                #if defined(AMS_SDMMC_USE_LOGGER)
+                BaseDeviceAccessor::PushErrorLog(false, "DDR200 tuning attempt %d failed: %X", attempt, tune_result.GetValue());
+                #endif
+
+                /* Re-assert the access mode and speed mode before retrying. */
+                static_cast<void>(this->SwitchAccessMode(target_am, wb, wb_size));
+                static_cast<void>(hc->SetSpeedMode(target_sm));
+
+                /* Small pause before retrying. */
+                WaitMicroSeconds(100);
+            } while (attempt < max_attempts);
+
+            R_TRY(tune_result);
+        } else {
+            R_TRY(hc->Tuning(target_sm, 19));
+        }
 
         /* Check status. */
         R_TRY(BaseDeviceAccessor::IssueCommandSendStatus());
@@ -596,7 +626,9 @@ namespace ams::sdmmc::impl {
 
         /* Set the host controller speed mode. */
         R_TRY(BaseDeviceAccessor::GetHostController()->SetSpeedMode(SpeedMode_SdCardHighSpeed));
+        #if defined(AMS_SDMMC_USE_LOGGER)
         BaseDeviceAccessor::PushErrorLog(true, "SD Speed Mode set to: %d", static_cast<int>(SpeedMode_SdCardHighSpeed));
+        #endif
 
         R_SUCCEED();
     }
@@ -776,18 +808,81 @@ namespace ams::sdmmc::impl {
     }
 
     Result SdCardDeviceAccessor::OnReadWrite(u32 sector_index, u32 num_sectors, void *buf, size_t buf_size, bool is_read) {
-        /* Do the read/write. */
-        const Result result = BaseDeviceAccessor::ReadWriteMultiple(sector_index, num_sectors, 0, buf, buf_size, is_read);
+        /* Special handling for read failures in DDR200 mode: attempt several
+         * software retries, then power-cycle + reinitialize and retry once. */
+        IHostController *hc = BaseDeviceAccessor::GetHostController();
 
-        /* Check if we failed because the sd card is removed. */
-        #if defined(AMS_SDMMC_USE_SD_CARD_DETECTOR)
-            if (sdmmc::ResultCommunicationNotAttained::Includes(result)) {
-                WaitMicroSeconds(m_sd_card_detector->GetDebounceMilliSeconds() * 1000);
-                AMS_SDMMC_CHECK_SD_CARD_REMOVED();
+        /* Fast-path: non-DDR200 or write operations use the normal path. */
+        if (!is_read || hc->GetSpeedMode() != SpeedMode_SdCardDdr200) {
+            const Result result = BaseDeviceAccessor::ReadWriteMultiple(sector_index, num_sectors, 0, buf, buf_size, is_read);
+
+            /* Check if we failed because the sd card is removed. */
+            #if defined(AMS_SDMMC_USE_SD_CARD_DETECTOR)
+                if (sdmmc::ResultCommunicationNotAttained::Includes(result)) {
+                    WaitMicroSeconds(m_sd_card_detector->GetDebounceMilliSeconds() * 1000);
+                    AMS_SDMMC_CHECK_SD_CARD_REMOVED();
+                }
+            #endif
+
+            R_RETURN(result);
+        }
+
+        /* We're in DDR200 read path. Try up to 5 software retries. */
+        const int max_soft_retries = 5;
+        Result last_result;
+        for (int attempt = 0; attempt < max_soft_retries; ++attempt) {
+            last_result = BaseDeviceAccessor::ReadWriteMultiple(sector_index, num_sectors, 0, buf, buf_size, is_read);
+            if (R_SUCCEEDED(last_result)) {
+                R_SUCCEED();
             }
-        #endif
 
-        R_RETURN(result);
+            /* Immediate stop/reset of the transfer. */
+            u32 stop_resp = 0;
+            static_cast<void>(hc->IssueStopTransmissionCommand(std::addressof(stop_resp)));
+
+            /* Small backoff before retrying. */
+            WaitMicroSeconds(1000);
+
+            /* Check if card removed between attempts. */
+            #if defined(AMS_SDMMC_USE_SD_CARD_DETECTOR)
+                if (sdmmc::ResultCommunicationNotAttained::Includes(last_result)) {
+                    WaitMicroSeconds(m_sd_card_detector->GetDebounceMilliSeconds() * 1000);
+                    AMS_SDMMC_CHECK_SD_CARD_REMOVED();
+                }
+            #endif
+
+            /* Log each failed attempt. */
+            this->PushErrorLog(false, "DDR200 R %X %X:%X", sector_index, num_sectors, last_result.GetValue());
+        }
+
+        /* If we reached here, soft retries didn't help. Perform power-cycle
+         * + reinitialization at a lower/safer speed, then retry once. */
+        BaseDeviceAccessor::GetHostController()->Shutdown();
+        /* Short delay to ensure power-down settles. */
+        WaitMicroSeconds(2000);
+
+        /* Try to reinitialize at a safer speed (Sdr50) which will run pad auto-cal
+         * and other controller startup calibrations. If that fails, fall back to default speed. */
+        Result reinit_result = this->StartupSdCardDevice(m_max_bus_width, SpeedMode_SdCardSdr50, m_work_buffer, m_work_buffer_size);
+        if (R_FAILED(reinit_result)) {
+            /* Try an even safer initialization. */
+            reinit_result = this->StartupSdCardDevice(m_max_bus_width, SpeedMode_SdCardDefaultSpeed, m_work_buffer, m_work_buffer_size);
+        }
+
+        if (R_FAILED(reinit_result)) {
+            /* Re-init failed — surface the last read error. */
+            this->PushErrorLog(true, "DDR200 reinit failed: %X", reinit_result.GetValue());
+            R_RETURN(last_result);
+        }
+
+        /* After reinit, attempt a single final read. */
+        const Result final_result = BaseDeviceAccessor::ReadWriteMultiple(sector_index, num_sectors, 0, buf, buf_size, is_read);
+
+        if (R_FAILED(final_result)) {
+            this->PushErrorLog(true, "DDR200 final read failed: %X", final_result.GetValue());
+        }
+
+        R_RETURN(final_result);
     }
 
     Result SdCardDeviceAccessor::ReStartup() {
