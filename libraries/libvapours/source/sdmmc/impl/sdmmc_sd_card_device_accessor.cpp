@@ -739,14 +739,17 @@ namespace ams::sdmmc::impl {
             SpeedMode speed_mode;
         } StartupParameters[] = {
             #if defined(AMS_SDMMC_ENABLE_SD_UHS_I)
-                #ifdef SDMMC_UHS_DDR200_SUPPORT
+                #if defined(SDMMC_UHS_DDR200_SUPPORT)
                 { BusWidth_4Bit, SpeedMode_SdCardDdr200       },//try first to start up with ddr200 if enabled
-                #endif
+                { BusWidth_4Bit, SpeedMode_SdCardDefaultSpeed },//dropping down to default speed instead of uhs tells us we're using ddr200 code
+                { BusWidth_1Bit, SpeedMode_SdCardHighSpeed    },
+                #else
                 { BusWidth_4Bit, SpeedMode_SdCardSdr104       },
                 { BusWidth_4Bit, SpeedMode_SdCardSdr104       },
                 { BusWidth_4Bit, SpeedMode_SdCardHighSpeed    },
                 { BusWidth_4Bit, SpeedMode_SdCardDefaultSpeed },
                 { BusWidth_1Bit, SpeedMode_SdCardHighSpeed    },
+                #endif
             #else
                 { BusWidth_4Bit, SpeedMode_SdCardHighSpeed    },
                 { BusWidth_4Bit, SpeedMode_SdCardHighSpeed    },

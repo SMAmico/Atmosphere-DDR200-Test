@@ -32,8 +32,8 @@
     //#define AMS_SDMMC_USE_OS_EVENTS
     //#define AMS_SDMMC_USE_OS_TIMER
     #define AMS_SDMMC_USE_UTIL_TIMER
-    #define AMS_SDMMC_ENABLE_MMC_HS400
-    #define AMS_SDMMC_ENABLE_SD_UHS_I
+    #define AMS_SDMMC_ENABLE_MMC_HS400 //this is where the emmc is booted from and put into hs400
+    #define AMS_SDMMC_ENABLE_SD_UHS_I //this is where the emmc is put into uhs mode
     #define AMS_SDMMC_SET_PLLC4_BASE
     //#define AMS_SDMMC_USE_SD_CARD_DETECTOR
 
@@ -62,9 +62,9 @@
     #define AMS_SDMMC_USE_OS_EVENTS
     #define AMS_SDMMC_USE_OS_TIMER
     //#define AMS_SDMMC_USE_UTIL_TIMER
-    #define SDMMC_UHS_DDR200_SUPPORT
+    #define SDMMC_UHS_DDR200_SUPPORT //this is where the sd card is booted from
     #define AMS_SDMMC_ENABLE_MMC_HS400
-    #define AMS_SDMMC_ENABLE_SD_UHS_I
+    #define AMS_SDMMC_ENABLE_SD_UHS_I //this is where the sd is put into uhs mode
     #define AMS_SDMMC_SET_PLLC4_BASE
     #define AMS_SDMMC_USE_SD_CARD_DETECTOR
 
