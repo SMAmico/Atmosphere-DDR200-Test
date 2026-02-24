@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#define SDMMC_UHS_DDR200_SUPPORT //hardcode it for now because LOL
 #if defined(ATMOSPHERE_IS_STRATOSPHERE)
 #include <stratosphere.hpp>
 #elif defined(ATMOSPHERE_IS_MESOSPHERE)
@@ -780,6 +781,38 @@ namespace ams::sdmmc::impl {
                 R_SUCCEED();
             }
 
+            /* If this was an attempt to start DDR200, try a few reattempts (retunes)
+             * before falling back to other modes. This allows transient tuning failures
+             * to be recovered without immediately switching to a different speed mode.
+             */
+            #if defined(SDMMC_UHS_DDR200_SUPPORT)
+            if (m_max_speed_mode == SpeedMode_SdCardDdr200) {
+                const int ddr_retries = 3;
+                int ddr_attempt = 0;
+                for (; ddr_attempt < ddr_retries; ++ddr_attempt) {
+                    /* Small pause before retrying startup/retune. */
+                    WaitMicroSeconds(1000);
+
+                    /* Re-attempt startup in DDR200 mode which will run the tuning path.
+                     * If it succeeds, return success immediately. */
+                    result = this->StartupSdCardDevice(m_max_bus_width, m_max_speed_mode, m_work_buffer, m_work_buffer_size);
+                    if (R_SUCCEEDED(result)) {
+                        if (i != 0) {
+                            BaseDeviceAccessor::PushErrorLog(true, "S %d %d:0", m_max_bus_width, m_max_speed_mode);
+                            BaseDeviceAccessor::IncrementNumActivationErrorCorrections();
+                        }
+                        R_SUCCEED();
+                    }
+
+                    /* Log each failed retry attempt. */
+                    BaseDeviceAccessor::PushErrorLog(false, "DDR200 retry %d failed: %X", ddr_attempt + 1, result.GetValue());
+
+                    /* Check if card was removed during retries. */
+                    AMS_SDMMC_CHECK_SD_CARD_REMOVED();
+                }
+            }
+            #endif
+
             /* Check if we were removed. */
             AMS_SDMMC_CHECK_SD_CARD_REMOVED();
 
@@ -858,8 +891,51 @@ namespace ams::sdmmc::impl {
             this->PushErrorLog(false, "DDR200 R %X %X:%X", sector_index, num_sectors, last_result.GetValue());
         }
 
-        /* If we reached here, soft retries didn't help. Perform power-cycle
-         * + reinitialization at a lower/safer speed, then retry once. */
+        /* If we reached here, soft retries didn't help. First try retuning
+         * the controller/card pair while remaining in DDR200 mode so we don't
+         * immediately fall back to a different speed. If retuning succeeds,
+         * retry the read; only if all retunes fail do we power-cycle and
+         * reinitialize at a safer speed.
+         */
+        #if defined(SDMMC_UHS_DDR200_SUPPORT)
+        {
+            const int retune_attempts = 3;
+            for (int t = 0; t < retune_attempts; ++t) {
+                /* Re-assert DDR200 access mode on the card. */
+                Result switch_res = this->SwitchAccessMode(SwitchFunctionAccessMode_Ddr200, m_work_buffer, m_work_buffer_size);
+                if (R_FAILED(switch_res)) {
+                    BaseDeviceAccessor::PushErrorLog(false, "DDR200 switch access mode failed: %X", switch_res.GetValue());
+                    AMS_SDMMC_CHECK_SD_CARD_REMOVED();
+                    WaitMicroSeconds(1000);
+                    continue;
+                }
+
+                /* Ensure host controller is set to DDR200 speed mode. */
+                static_cast<void>(hc->SetSpeedMode(SpeedMode_SdCardDdr200));
+
+                /* Attempt tuning. */
+                Result tune_result = hc->Tuning(SpeedMode_SdCardDdr200, 19);
+                if (R_SUCCEEDED(tune_result)) {
+                    /* After a successful tune, attempt the read once. */
+                    Result r = BaseDeviceAccessor::ReadWriteMultiple(sector_index, num_sectors, 0, buf, buf_size, is_read);
+                    if (R_SUCCEEDED(r)) {
+                        R_SUCCEED();
+                    }
+                    /* update last_result so we can report the final error if needed */
+                    last_result = r;
+                } else {
+                    BaseDeviceAccessor::PushErrorLog(false, "DDR200 retune %d failed: %X", t + 1, tune_result.GetValue());
+                }
+
+                /* Check for card removal and small backoff before retrying. */
+                AMS_SDMMC_CHECK_SD_CARD_REMOVED();
+                WaitMicroSeconds(1000);
+            }
+        }
+        #endif
+
+        /* Retuning didn't recover the read; perform power-cycle + reinitialization
+         * at a lower/safer speed, then retry once. */
         BaseDeviceAccessor::GetHostController()->Shutdown();
         /* Short delay to ensure power-down settles. */
         WaitMicroSeconds(2000);
