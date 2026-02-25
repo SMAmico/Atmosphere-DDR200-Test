@@ -76,8 +76,13 @@ namespace ams {
 #endif
 
 #ifdef ATMOSPHERE_GIT_REVISION
+    /* Marker appended to indicate a custom build. Adjust this literal as needed. */
+    #ifndef ATMOSPHERE_CUSTOM_MARKER
+    #define ATMOSPHERE_CUSTOM_MARKER "-custom"
+    #endif
+
     NX_CONSTEXPR const char *GetGitRevision() {
-        return ATMOSPHERE_GIT_REVISION;
+        return ATMOSPHERE_GIT_REVISION ATMOSPHERE_CUSTOM_MARKER;
     }
 #endif
 

@@ -22,6 +22,9 @@
 #else
 #include <vapours.hpp>
 #endif
+#if defined(AMS_SDMMC_USE_LOGGER) && defined(ATMOSPHERE_IS_STRATOSPHERE)
+/* We will persist logs to a save file on stratosphere builds. */
+#endif
 #include "sdmmc_base_device_accessor.hpp"
 
 namespace ams::sdmmc::impl {
@@ -579,3 +582,28 @@ namespace ams::sdmmc::impl {
     }
 
 }
+
+#if defined(AMS_SDMMC_USE_LOGGER) && defined(ATMOSPHERE_IS_STRATOSPHERE)
+void ams::sdmmc::impl::BaseDeviceAccessor::FlushLogsToPersistent() const {
+    /* Acquire logs into a temporary buffer and append them to a save file. */
+    char buf[ams::sdmmc::impl::Logger::LogCountMax * ams::sdmmc::impl::Logger::LogLengthMax + 1];
+    const size_t got = m_error_logger.GetAndClearLogs(buf, sizeof(buf));
+    if (got == 0) return;
+
+    /* Append to a file on the SD card root so logs are easy to retrieve. */
+    const char SdMountName[] = "sdcard";
+    const char Path[] = "sdcard:/atmosphere_sdmmc_logs.txt";
+
+    /* Try to mount the SD card; if not present, skip silently. */
+    (void)fs::MountSdCard(SdMountName);
+
+    fs::FileHandle file;
+    if (R_FAILED(fs::OpenFile(std::addressof(file), Path, fs::OpenMode_Write | fs::OpenMode_AllowAppend))) {
+        return;
+    }
+    ON_SCOPE_EXIT { fs::CloseFile(file); };
+
+    /* Write the logs (got includes null terminator). */
+    (void)fs::WriteFile(file, 0, reinterpret_cast<const u8 *>(buf), static_cast<size_t>(got - 1), fs::WriteOption::Flush);
+}
+#endif

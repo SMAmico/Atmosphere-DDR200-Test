@@ -16,7 +16,7 @@
 #pragma once
 #include <vapours.hpp>
 #include "sdmmc_base_device_accessor.hpp"
-
+#define SDMMC_UHS_DDR200_SUPPORT //hardcode it for now because LOL
 #if defined(AMS_SDMMC_USE_SD_CARD_DETECTOR)
 #include "sdmmc_device_detector.hpp"
 #endif

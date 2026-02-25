@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#define SDMMC_UHS_DDR200_SUPPORT //hardcode it for now because LOL
 #if defined(ATMOSPHERE_IS_STRATOSPHERE)
 #include <stratosphere.hpp>
 #elif defined(ATMOSPHERE_IS_MESOSPHERE)

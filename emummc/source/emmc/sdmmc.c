@@ -22,6 +22,9 @@
 #include "mmc.h"
 #include "nx_sd.h"
 #include "sd.h"
+#include "../libs/fatfs/ff.h"
+#include <stdarg.h>
+#include <stdio.h>
 #include "../utils/types.h"
 #include "../utils/util.h"
 #include "../utils/fatal.h"
@@ -42,6 +45,66 @@ static inline u32 unstuff_bits(u32 *resp, u32 start, u32 size)
 	if (size + shft > 32)
 		res |= resp[off - 1] << ((32 - shft) % 32);
 	return res & mask;
+}
+
+#define SWITCH_ACCESSMODE_DDR200 14
+
+/* Simple persistent logging helper that appends to the FAT root. */
+static void emu_log(const char *fmt, ...)
+{
+	char buf[256];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+
+	FIL f;
+	FRESULT fr = f_open(&f, "emummc_ddr200_logs.txt", FA_OPEN_ALWAYS | FA_WRITE);
+	if (fr != FR_OK)
+		return;
+
+	if (f_lseek(&f, f_size(&f)) != FR_OK)
+	{
+		f_close(&f);
+		return;
+	}
+
+	UINT bw;
+	f_write(&f, buf, strlen(buf), &bw);
+	f_write(&f, "\n", 1, &bw);
+	f_close(&f);
+}
+
+/* Marker persistence to indicate DDR200 preference was successfully enabled. */
+static bool emu_marker_exists(void)
+{
+	FIL f;
+	FRESULT fr = f_open(&f, "emummc_prefer_ddr200.marker", FA_READ);
+	if (fr == FR_OK)
+	{
+		f_close(&f);
+		return true;
+	}
+	return false;
+}
+
+static void emu_write_marker(void)
+{
+	FIL f;
+	FRESULT fr = f_open(&f, "emummc_prefer_ddr200.marker", FA_OPEN_ALWAYS | FA_WRITE);
+	if (fr != FR_OK)
+		return;
+
+	if (f_lseek(&f, f_size(&f)) != FR_OK)
+	{
+		f_close(&f);
+		return;
+	}
+
+	const char *msg = "DDR200 preferred\n";
+	UINT bw;
+	f_write(&f, msg, strlen(msg), &bw);
+	f_close(&f);
 }
 
 /*
@@ -272,11 +335,23 @@ static int _sdmmc_storage_readwrite_ex(sdmmc_storage_t *storage, u32 *blkcnt_out
 
 	if (!sdmmc_execute_cmd(storage->sdmmc, &cmdbuf, &reqbuf, blkcnt_out))
 	{
+		/* On failure, try a single retune attempt (use SDR104 tuning routine as proxy for DDR200). */
+		emu_log("transfer failed, attempting retune");
+		if (sdmmc_tuning_execute(storage->sdmmc, SDHCI_TIMING_UHS_SDR104, MMC_SEND_TUNING_BLOCK))
+		{
+			emu_log("retune succeeded, retrying transfer");
+			if (sdmmc_execute_cmd(storage->sdmmc, &cmdbuf, &reqbuf, blkcnt_out))
+				goto success;
+			emu_log("retry after retune still failed");
+		}
+
 		sdmmc_stop_transmission(storage->sdmmc, &tmp);
 		_sdmmc_storage_get_status(storage, &tmp, 0);
 
 		return 0;
 	}
+
+success:;
 
 	return 1;
 }
@@ -726,6 +801,25 @@ static int _mmc_storage_enable_highspeed(sdmmc_storage_t *storage, u32 card_type
 	if (sdmmc_get_io_power(storage->sdmmc) != SDMMC_POWER_1_8)
 		goto out;
 
+	/* If a persistent marker exists, prefer HS200 (200MHz) where supported. */
+	if (emu_marker_exists())
+	{
+		if (card_type & EXT_CSD_CARD_TYPE_HS200_1_8V)
+		{
+			emu_log("preferring HS200 due to marker");
+			if (_mmc_storage_enable_HS200(storage))
+			{
+				emu_log("HS200 enabled (preferred)");
+				emu_write_marker();
+				return 1;
+			}
+			else
+			{
+				emu_log("HS200 preferred but failed, falling back");
+			}
+		}
+	}
+
 	if (sdmmc_get_bus_width(storage->sdmmc) == SDMMC_BUS_WIDTH_8 &&
 		card_type & EXT_CSD_CARD_TYPE_HS400_1_8V && type == SDHCI_TIMING_MMC_HS400)
 		return _mmc_storage_enable_HS400(storage);
@@ -734,7 +828,16 @@ static int _mmc_storage_enable_highspeed(sdmmc_storage_t *storage, u32 card_type
 		(sdmmc_get_bus_width(storage->sdmmc) == SDMMC_BUS_WIDTH_4
 		&& card_type & EXT_CSD_CARD_TYPE_HS200_1_8V
 		&& (type == SDHCI_TIMING_MMC_HS400 || type == SDHCI_TIMING_MMC_HS200)))
-		return _mmc_storage_enable_HS200(storage);
+	{
+		if (_mmc_storage_enable_HS200(storage))
+		{
+			emu_log("HS200 enabled");
+			emu_write_marker();
+			return 1;
+		}
+		emu_log("HS200 available but enable failed");
+		return 0;
+	}
 
 out:
 	if (card_type & EXT_CSD_CARD_TYPE_HS_52)
@@ -1147,6 +1250,49 @@ int _sd_storage_enable_uhs_low_volt(sdmmc_storage_t *storage, u32 type, u8 *buf)
 	u8  access_mode = buf[13];
 	u16 current_limit = buf[7] | buf[6] << 8;
 DPRINTF("[SD] access: %02X, current: %02X\n", access_mode, current_limit);
+
+	/* Check for DDR200 support in the command system bits (buf[10..11] bit 14). */
+	u16 cmdsys = (u16)buf[11] | ((u16)buf[10] << 8);
+	if (cmdsys & (1u << 14))
+	{
+		emu_log("SD reports DDR200 support (cmdsys=0x%04X)", cmdsys);
+		/* Try to select DDR200 by writing the command-system selection nibble (group 1) to 14. */
+		if (_sd_storage_switch(storage, buf, SD_SWITCH_SET, 1, SWITCH_ACCESSMODE_DDR200))
+		{
+			/* After SET, buf contains the new switch status. Check selected command system nibble at buf[16]>>4. */
+			if (((buf[16] >> 4) & 0xF) == SWITCH_ACCESSMODE_DDR200)
+			{
+				emu_log("SD switched to DDR200 command system");
+				/* Configure host clock and run tuning using SDR104 tuning routine (closest available). */
+				if (!sdmmc_setup_clock(storage->sdmmc, SDHCI_TIMING_UHS_SDR104))
+				{
+					emu_log("sdmmc_setup_clock for DDR200 failed");
+				}
+				else
+				{
+					if (!sdmmc_tuning_execute(storage->sdmmc, SDHCI_TIMING_UHS_SDR104, MMC_SEND_TUNING_BLOCK))
+					{
+						emu_log("DDR200 tuning failed");
+					}
+					else
+					{
+						emu_log("DDR200 tuning succeeded");
+						storage->csd.busspeed = 200;
+						return _sdmmc_storage_check_status(storage);
+					}
+				}
+			}
+			else
+			{
+				emu_log("DDR200 SET returned but selection mismatch (sel=0x%X)", (buf[16] >> 4) & 0xF);
+			}
+		}
+		else
+		{
+			emu_log("DDR200 SET command failed");
+		}
+		/* If DDR200 fails, continue with normal UHS negotiation/fallback. */
+	}
 
 	// Try to raise the current limit to let the card perform better.
 	_sd_storage_set_current_limit(storage, current_limit, buf);

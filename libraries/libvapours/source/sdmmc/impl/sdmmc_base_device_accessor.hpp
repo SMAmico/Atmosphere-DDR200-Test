@@ -22,7 +22,7 @@ namespace ams::sdmmc::impl {
 
     #if defined(AMS_SDMMC_USE_LOGGER)
     class Logger {
-        private:
+        public:
             static constexpr size_t LogLengthMax = 0x20;
             static constexpr size_t LogCountMax  = 0x10;
         private:
@@ -396,7 +396,7 @@ namespace ams::sdmmc::impl {
             u32 m_num_read_write_failures;
             u32 m_num_read_write_error_corrections;
             #if defined(AMS_SDMMC_USE_LOGGER)
-            Logger m_error_logger;
+            mutable Logger m_error_logger;
             #endif
         private:
             void ClearErrorInfo() {
@@ -457,15 +457,20 @@ namespace ams::sdmmc::impl {
                 ++m_num_activation_error_corrections;
             }
 
-            void PushErrorTimeStamp() {
+            void PushErrorTimeStamp() const {
                 #if defined(AMS_SDMMC_USE_LOGGER)
                 {
                     m_error_logger.Push("%u", static_cast<u32>(os::ConvertToTimeSpan(os::GetSystemTick()).GetSeconds()));
+                    this->FlushLogsToPersistent();
                 }
                 #endif
             }
 
-            void PushErrorLog(bool with_timestamp, const char *fmt, ...) {
+#if defined(AMS_SDMMC_USE_LOGGER)
+            void FlushLogsToPersistent() const;
+#endif
+
+            void PushErrorLog(bool with_timestamp, const char *fmt, ...) const {
                 #if defined(AMS_SDMMC_USE_LOGGER)
                 {
                     std::va_list vl;

@@ -300,74 +300,28 @@ int sdmmc_setup_clock(sdmmc_t *sdmmc, u32 type)
 
 	_sdmmc_reset(sdmmc);
 
-	switch (type)
 	{
-	case SDHCI_TIMING_MMC_ID:
-	case SDHCI_TIMING_MMC_LS26:
-	case SDHCI_TIMING_SD_ID:
-	case SDHCI_TIMING_SD_DS12:
-		sdmmc->regs->hostctl  &= ~SDHCI_CTRL_HISPD;
-		sdmmc->regs->hostctl2 &= ~SDHCI_CTRL_VDD_180;
-		break;
+		u32 host_clock = 0;
+		u16 divv = 1;
 
-	case SDHCI_TIMING_MMC_HS52:
-	case SDHCI_TIMING_SD_HS25:
-		sdmmc->regs->hostctl  |= SDHCI_CTRL_HISPD;
-		sdmmc->regs->hostctl2 &= ~SDHCI_CTRL_VDD_180;
-		break;
+		clock_sdmmc_get_card_clock_div(&host_clock, &divv, type);
+		sdmmc->divisor = divv;
 
-	case SDHCI_TIMING_MMC_HS200:
-	case SDHCI_TIMING_UHS_SDR50: // T210 Errata for SDR50, the host must be set to SDR104.
-	case SDHCI_TIMING_UHS_SDR104:
-	case SDHCI_TIMING_UHS_SDR82:
-	case SDHCI_TIMING_UHS_DDR50:
-	case SDHCI_TIMING_MMC_HS102:
-		sdmmc->regs->hostctl2  = (sdmmc->regs->hostctl2 & SDHCI_CTRL_UHS_MASK) | UHS_SDR104_BUS_SPEED;
-		sdmmc->regs->hostctl2 |= SDHCI_CTRL_VDD_180;
-		break;
+		u32 div_low = divv & 0xFF;
+		u32 div_hi  = (divv >> 8) & 0x3;
 
-	case SDHCI_TIMING_MMC_HS400:
-		// Non standard.
-		sdmmc->regs->hostctl2  = (sdmmc->regs->hostctl2 & SDHCI_CTRL_UHS_MASK) | HS400_BUS_SPEED;
-		sdmmc->regs->hostctl2 |= SDHCI_CTRL_VDD_180;
-		break;
+		sdmmc->regs->clkcon = (sdmmc->regs->clkcon & ~(SDHCI_DIV_MASK | SDHCI_DIV_HI_MASK))
+			| (div_low << SDHCI_DIVIDER_SHIFT) | (div_hi << SDHCI_DIVIDER_HI_SHIFT);
 
-	case SDHCI_TIMING_UHS_SDR25:
-		sdmmc->regs->hostctl2  = (sdmmc->regs->hostctl2 & SDHCI_CTRL_UHS_MASK) | UHS_SDR25_BUS_SPEED;
-		sdmmc->regs->hostctl2 |= SDHCI_CTRL_VDD_180;
-		break;
+		// Enable the SD clock again.
+		if (should_enable_sd_clock)
+			sdmmc->regs->clkcon |= SDHCI_CLOCK_CARD_EN;
 
-	case SDHCI_TIMING_UHS_SDR12:
-		sdmmc->regs->hostctl2  = (sdmmc->regs->hostctl2 & SDHCI_CTRL_UHS_MASK) | UHS_SDR12_BUS_SPEED;
-		sdmmc->regs->hostctl2 |= SDHCI_CTRL_VDD_180;
-		break;
+		if (type == SDHCI_TIMING_MMC_HS400)
+			return _sdmmc_dll_cal_execute(sdmmc);
+		return 1;
 	}
 
-	_sdmmc_commit_changes(sdmmc);
-
-	u32 clock;
-	u16 divisor;
-	clock_sdmmc_get_card_clock_div(&clock, &divisor, type);
-	clock_sdmmc_config_clock_source(&clock, sdmmc->id, clock);
-	sdmmc->divisor = (clock + divisor - 1) / divisor;
-
-	//if divisor != 1 && divisor << 31 -> error
-
-	u16 div = divisor >> 1;
-	divisor = 0;
-	if (div > 0xFF)
-		divisor = div >> SDHCI_DIVIDER_SHIFT;
-
-	sdmmc->regs->clkcon = (sdmmc->regs->clkcon & ~(SDHCI_DIV_MASK | SDHCI_DIV_HI_MASK))
-		| (div << SDHCI_DIVIDER_SHIFT) | (divisor << SDHCI_DIVIDER_HI_SHIFT);
-
-	// Enable the SD clock again.
-	if (should_enable_sd_clock)
-		sdmmc->regs->clkcon |= SDHCI_CLOCK_CARD_EN;
-
-	if (type == SDHCI_TIMING_MMC_HS400)
-		return _sdmmc_dll_cal_execute(sdmmc);
-	return 1;
 }
 
 static void _sdmmc_card_clock_enable(sdmmc_t *sdmmc)
@@ -645,8 +599,121 @@ static int _sdmmc_tuning_execute_once(sdmmc_t *sdmmc, u32 cmd)
 	return 0;
 }
 
+static int sdmmc_tuning_execute_ddr200(sdmmc_t *sdmmc, u32 cmd)
+{
+	const u32 max_taps = 128;
+	u32 best_start = 0, best_len = 0;
+	u32 cur_start = 0, cur_len = 0;
+
+	sdmmc->regs->ventunctl1 = 0; // step_size 1
+	sdmmc->regs->ventunctl0 = (sdmmc->regs->ventunctl0 & 0xFFFF1FFF) | (2 << 13); // tries=128
+	sdmmc->regs->ventunctl0 = (sdmmc->regs->ventunctl0 & 0xFFFFE03F) | (1 << 6); // multiplier 1
+	sdmmc->regs->ventunctl0 |= TEGRA_MMC_VNDR_TUN_CTRL0_TAP_VAL_UPDATED_BY_HW;
+	sdmmc->regs->hostctl2 |= SDHCI_CTRL_EXEC_TUNING;
+
+	for (u32 tap = 0; tap < max_taps; ++tap)
+	{
+		sdmmc->regs->ventunctl0 = (sdmmc->regs->ventunctl0 & 0xFFFFE03F) | ((tap & 0x7F) << 6);
+		_sdmmc_commit_changes(sdmmc);
+
+		int ok = _sdmmc_tuning_execute_once(sdmmc, cmd);
+		if (ok)
+		{
+			if (cur_len == 0) cur_start = tap;
+			cur_len++;
+		}
+		else
+		{
+			if (cur_len > best_len)
+			{
+				best_start = cur_start;
+				best_len = cur_len;
+			}
+			cur_len = 0;
+		}
+	}
+
+	if (cur_len > best_len)
+	{
+		best_start = cur_start;
+		best_len = cur_len;
+	}
+
+	if (best_len == 0)
+	{
+		sdmmc->regs->hostctl2 &= ~SDHCI_CTRL_EXEC_TUNING;
+		return 0;
+	}
+
+	u32 chosen = best_start + (best_len / 2);
+	sdmmc->regs->ventunctl0 = (sdmmc->regs->ventunctl0 & 0xFFFFE03F) | ((chosen & 0x7F) << 6);
+	sdmmc->regs->ventunctl0 |= TEGRA_MMC_VNDR_TUN_CTRL0_TAP_VAL_UPDATED_BY_HW;
+	_sdmmc_commit_changes(sdmmc);
+
+	sdmmc_save_tap_value(sdmmc);
+	sdmmc->regs->hostctl2 |= SDHCI_CTRL_TUNED_CLK;
+	return 1;
+}
+
 int sdmmc_tuning_execute(sdmmc_t *sdmmc, u32 type, u32 cmd)
 {
+	if (type == SDHCI_TIMING_UHS_DDR200)
+	{
+		// Manual tuning path for DDR200: try automatic-like tuning per-tap and pick best window.
+		u32 max_taps = 128;
+		u32 best_start = 0, best_len = 0;
+		u32 cur_start = 0, cur_len = 0;
+		// Prepare ventun registers similar to automatic tuning
+		sdmmc->regs->ventunctl1 = 0; // step_size 1
+		sdmmc->regs->ventunctl0 = (sdmmc->regs->ventunctl0 & 0xFFFF1FFF) | (2 << 13); // tries=128
+		sdmmc->regs->ventunctl0 = (sdmmc->regs->ventunctl0 & 0xFFFFE03F) | (1 << 6); // multiplier 1
+		sdmmc->regs->ventunctl0 |= TEGRA_MMC_VNDR_TUN_CTRL0_TAP_VAL_UPDATED_BY_HW;
+		sdmmc->regs->hostctl2 |= SDHCI_CTRL_EXEC_TUNING;
+
+		for (u32 tap = 0; tap < max_taps; ++tap)
+		{
+			// set tap value in bits [12:6]
+			sdmmc->regs->ventunctl0 = (sdmmc->regs->ventunctl0 & 0xFFFFE03F) | ((tap & 0x7F) << 6);
+			_sdmmc_commit_changes(sdmmc);
+			// run single tuning attempt
+			int ok = _sdmmc_tuning_execute_once(sdmmc, cmd);
+			if (ok)
+			{
+				if (cur_len == 0) cur_start = tap;
+				cur_len++;
+			}
+			else
+			{
+				if (cur_len > best_len)
+				{
+					best_start = cur_start;
+					best_len = cur_len;
+				}
+				cur_len = 0;
+			}
+		}
+
+		if (cur_len > best_len)
+		{
+			best_start = cur_start;
+			best_len = cur_len;
+		}
+
+		if (best_len == 0)
+		{
+			sdmmc->regs->hostctl2 &= ~SDHCI_CTRL_EXEC_TUNING;
+			return 0;
+		}
+
+		// choose midpoint of best window
+		u32 chosen = best_start + (best_len / 2);
+		sdmmc->regs->ventunctl0 = (sdmmc->regs->ventunctl0 & 0xFFFFE03F) | ((chosen & 0x7F) << 6);
+		sdmmc->regs->ventunctl0 |= TEGRA_MMC_VNDR_TUN_CTRL0_TAP_VAL_UPDATED_BY_HW;
+		_sdmmc_commit_changes(sdmmc);
+		sdmmc->regs->hostctl2 |= SDHCI_CTRL_TUNED_CLK;
+		return 1;
+	}
+
 	u32 max = 0, flag = 0;
 
 	switch (type)
@@ -657,6 +724,12 @@ int sdmmc_tuning_execute(sdmmc_t *sdmmc, u32 type, u32 cmd)
 	case SDHCI_TIMING_UHS_SDR82:
 		max = 128;
 		flag = (2 << 13); // 128 iterations.
+		break;
+
+	case SDHCI_TIMING_UHS_DDR200:
+		/* Treat DDR200 similar to SDR104 for tuning iterations. */
+		max = 128;
+		flag = (2 << 13);
 		break;
 
 	case SDHCI_TIMING_UHS_SDR50:

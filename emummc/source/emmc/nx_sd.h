@@ -26,7 +26,8 @@ enum
 	SD_1BIT_HS25  = 1,
 	SD_4BIT_HS25  = 2,
 	SD_UHS_SDR82  = 3,
-	SD_UHS_SDR104 = 4
+	SD_UHS_SDR104 = 4,
+	SD_UHS_DDR208 = 5
 };
 
 u32  nx_sd_get_mode();

@@ -11,6 +11,9 @@
 #ifndef MMC_SD_H
 #define MMC_SD_H
 
+/* Enable DDR200 (UHS DDR200) support when available. */
+#define BDK_SDMMC_UHS_DDR200_SUPPORT
+
 /* SD commands                           type  argument     response */
 /* class 0 */
 /* This is basically the same command as for MMC with some quirks. */
@@ -95,6 +98,10 @@
 #define SD_MODE_UHS_SDR50	(1 << UHS_SDR50_BUS_SPEED)
 #define SD_MODE_UHS_SDR104	(1 << UHS_SDR104_BUS_SPEED)
 #define SD_MODE_UHS_DDR50	(1 << UHS_DDR50_BUS_SPEED)
+#ifdef BDK_SDMMC_UHS_DDR200_SUPPORT
+/* Marker for DDR200/UHS DDR mode (uses an otherwise-unused bit). */
+#define SD_MODE_UHS_DDR200	(1 << HS400_BUS_SPEED)
+#endif
 
 #define SD_DRIVER_TYPE_B	0x01
 #define SD_DRIVER_TYPE_A	0x02

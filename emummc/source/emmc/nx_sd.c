@@ -25,7 +25,7 @@ extern sdmmc_storage_t sd_storage;
 
 static u32  sd_mode = SD_UHS_SDR104;
 
-u32 nx_sd_mode_get()
+u32 nx_sd_get_mode()
 {
 	return sd_mode;
 }
@@ -60,6 +60,11 @@ int nx_sd_init_retry(bool power_cycle)
 	case SD_UHS_SDR104:
 		type = SDHCI_TIMING_UHS_SDR104;
 		break;
+#ifdef BDK_SDMMC_UHS_DDR200_SUPPORT
+	case SD_UHS_DDR208:
+		type = SDHCI_TIMING_UHS_DDR200;
+		break;
+#endif
 	default:
 		sd_mode = SD_UHS_SDR104;
 	}

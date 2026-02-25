@@ -17,7 +17,7 @@
 #include <vapours.hpp>
 #include "sdmmc_sd_host_standard_controller.hpp"
 #include "sdmmc_clock_reset_controller.hpp"
-
+#define SDMMC_UHS_DDR200_SUPPORT //hardcode it for now because LOL
 namespace ams::sdmmc::impl {
 
     bool IsSocMariko();
