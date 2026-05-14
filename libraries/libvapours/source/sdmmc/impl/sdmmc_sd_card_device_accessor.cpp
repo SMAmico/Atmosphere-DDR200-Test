@@ -758,6 +758,11 @@ namespace ams::sdmmc::impl {
             #if defined(AMS_SDMMC_ENABLE_SD_UHS_I)
                 #if defined(SDMMC_UHS_DDR200_SUPPORT)
                 { BusWidth_4Bit, SpeedMode_SdCardDdr200       },//try first to start up with ddr200 if enabled
+                { BusWidth_4Bit, SpeedMode_SdCardSdr104       },
+                { BusWidth_4Bit, SpeedMode_SdCardSdr104       },
+                { BusWidth_4Bit, SpeedMode_SdCardHighSpeed    },
+                { BusWidth_4Bit, SpeedMode_SdCardDefaultSpeed },
+                { BusWidth_1Bit, SpeedMode_SdCardHighSpeed    },
                 #else
                 { BusWidth_4Bit, SpeedMode_SdCardSdr104       },
                 { BusWidth_4Bit, SpeedMode_SdCardSdr104       },
