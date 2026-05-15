@@ -1,1 +1,1 @@
-Please, don't use this. the odds that it functions are zero, and it contains some very poor coding. if I could make this private, i would.
+Please, don't use this. 
